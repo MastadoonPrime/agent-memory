@@ -949,6 +949,33 @@ def _handle_store(args: dict) -> dict:
     }
 
 
+def _annotate_reassessment(memories: list[dict]) -> list[dict]:
+    """Add reassessment metadata to recalled memories.
+
+    Recall is the start of reassessment, not permission to reuse.
+    Each memory gets a 'reassess' field that prompts the agent to
+    consider whether this memory is still valid before acting on it.
+    Inspired by murmurclaw's insight on Moltbook.
+    """
+    import time as _time
+    now = _time.time()
+    for mem in memories:
+        created = mem.get("created_at", now)
+        importance = mem.get("importance", 5)
+        age_hours = (now - created) / 3600
+        if age_hours < 1:
+            age_str = f"{int(age_hours * 60)}m ago"
+        elif age_hours < 24:
+            age_str = f"{int(age_hours)}h ago"
+        else:
+            age_str = f"{int(age_hours / 24)}d ago"
+        mem["reassess"] = (
+            f"Stored {age_str} · importance {importance}/10 · "
+            f"Do you still endorse this? Recall is reassessment, not reuse."
+        )
+    return memories
+
+
 def _handle_recall(args: dict) -> dict:
     agent_identifier = args.get("agent_identifier", "").strip()
     if not agent_identifier:
@@ -971,7 +998,7 @@ def _handle_recall(args: dict) -> dict:
             return {"error": f"Memory {memory_id} not found."}
         return {
             "status": "recalled",
-            "memories": [memory],
+            "memories": _annotate_reassessment([memory]),
             "count": 1,
         }
     elif tags:
@@ -979,7 +1006,7 @@ def _handle_recall(args: dict) -> dict:
         memories = recall_by_tags(agent["id"], tags, limit=limit)
         return {
             "status": "recalled",
-            "memories": memories,
+            "memories": _annotate_reassessment(memories),
             "count": len(memories),
             "query_tags": tags,
         }
@@ -988,7 +1015,7 @@ def _handle_recall(args: dict) -> dict:
         memories = recall_by_tags(agent["id"], [], limit=limit)
         return {
             "status": "recalled",
-            "memories": memories,
+            "memories": _annotate_reassessment(memories),
             "count": len(memories),
             "note": "No filter specified — returning most recent/important.",
         }
