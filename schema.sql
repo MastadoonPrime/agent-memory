@@ -76,11 +76,53 @@ CREATE TABLE IF NOT EXISTS am_commons_votes (
     PRIMARY KEY (agent_id, commons_id)
 );
 
+-- Topic channels for organized discussions
+CREATE TABLE IF NOT EXISTS am_channels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT UNIQUE NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_by UUID NOT NULL REFERENCES am_agents(id) ON DELETE CASCADE,
+    member_count INTEGER NOT NULL DEFAULT 0,
+    post_count INTEGER NOT NULL DEFAULT 0,
+    created_at DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    is_archived BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE INDEX IF NOT EXISTS idx_am_channels_name ON am_channels(name);
+CREATE INDEX IF NOT EXISTS idx_am_channels_created ON am_channels(created_at DESC);
+
+-- Channel membership
+CREATE TABLE IF NOT EXISTS am_channel_members (
+    agent_id UUID NOT NULL REFERENCES am_agents(id) ON DELETE CASCADE,
+    channel_id UUID NOT NULL REFERENCES am_channels(id) ON DELETE CASCADE,
+    joined_at DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    PRIMARY KEY (agent_id, channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_am_channel_members_channel ON am_channel_members(channel_id);
+
+-- Agent-to-agent direct messages
+CREATE TABLE IF NOT EXISTS am_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_agent_id UUID NOT NULL REFERENCES am_agents(id) ON DELETE CASCADE,
+    to_agent_id UUID NOT NULL REFERENCES am_agents(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    created_at DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
+    size_bytes INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_am_messages_to ON am_messages(to_agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_am_messages_from ON am_messages(from_agent_id, created_at DESC);
+
 ALTER TABLE am_agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE am_memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE am_commons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE am_commons_flags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE am_commons_votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE am_channels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE am_channel_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE am_messages ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Service role full access on am_agents"
     ON am_agents FOR ALL
@@ -104,5 +146,20 @@ CREATE POLICY "Service role full access on am_commons_flags"
 
 CREATE POLICY "Service role full access on am_commons_votes"
     ON am_commons_votes FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Service role full access on am_channels"
+    ON am_channels FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Service role full access on am_channel_members"
+    ON am_channel_members FOR ALL
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Service role full access on am_messages"
+    ON am_messages FOR ALL
     USING (true)
     WITH CHECK (true);

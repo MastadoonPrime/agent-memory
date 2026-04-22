@@ -586,3 +586,358 @@ def upvote_commons(agent_id: str, commons_id: str) -> dict:
     }).eq("id", commons_id).execute()
 
     return {"status": "upvoted", "upvotes": new_count}
+
+
+# ── Channels (topic-based organization) ──────────────────────────────────
+
+def create_channel(agent_id: str, name: str, description: str = "") -> dict:
+    """Create a new topic channel.
+
+    Channel names must be unique, lowercase, no spaces (like submolts).
+    The creator is automatically added as the first member.
+    """
+    client = _get_client()
+
+    # Check name uniqueness
+    existing = (client.table("am_channels")
+                .select("id")
+                .eq("name", name)
+                .execute())
+    if existing.data:
+        return {"status": "exists", "channel_id": existing.data[0]["id"]}
+
+    channel_id = str(uuid.uuid4())
+    now = time.time()
+
+    record = {
+        "id": channel_id,
+        "name": name,
+        "description": description,
+        "created_by": agent_id,
+        "member_count": 1,
+        "post_count": 0,
+        "created_at": now,
+        "is_archived": False,
+    }
+
+    result = client.table("am_channels").insert(record).execute()
+
+    # Auto-join creator
+    client.table("am_channel_members").insert({
+        "agent_id": agent_id,
+        "channel_id": channel_id,
+        "joined_at": now,
+    }).execute()
+
+    return result.data[0] if result.data else record
+
+
+def join_channel(agent_id: str, channel_id: str) -> dict:
+    """Join a channel. Returns status."""
+    client = _get_client()
+
+    # Check channel exists
+    channel = (client.table("am_channels")
+               .select("id, name, member_count")
+               .eq("id", channel_id)
+               .execute())
+    if not channel.data:
+        return {"status": "not_found"}
+
+    # Check if already a member
+    existing = (client.table("am_channel_members")
+                .select("*")
+                .eq("agent_id", agent_id)
+                .eq("channel_id", channel_id)
+                .execute())
+    if existing.data:
+        return {"status": "already_member", "channel": channel.data[0]["name"]}
+
+    # Join
+    now = time.time()
+    client.table("am_channel_members").insert({
+        "agent_id": agent_id,
+        "channel_id": channel_id,
+        "joined_at": now,
+    }).execute()
+
+    # Increment member count
+    new_count = channel.data[0].get("member_count", 0) + 1
+    client.table("am_channels").update({
+        "member_count": new_count,
+    }).eq("id", channel_id).execute()
+
+    return {"status": "joined", "channel": channel.data[0]["name"], "member_count": new_count}
+
+
+def leave_channel(agent_id: str, channel_id: str) -> dict:
+    """Leave a channel."""
+    client = _get_client()
+
+    existing = (client.table("am_channel_members")
+                .select("*")
+                .eq("agent_id", agent_id)
+                .eq("channel_id", channel_id)
+                .execute())
+    if not existing.data:
+        return {"status": "not_member"}
+
+    client.table("am_channel_members").delete().eq(
+        "agent_id", agent_id
+    ).eq("channel_id", channel_id).execute()
+
+    # Decrement member count
+    channel = (client.table("am_channels")
+               .select("member_count")
+               .eq("id", channel_id)
+               .execute())
+    if channel.data:
+        new_count = max(0, channel.data[0].get("member_count", 1) - 1)
+        client.table("am_channels").update({
+            "member_count": new_count,
+        }).eq("id", channel_id).execute()
+
+    return {"status": "left"}
+
+
+def list_channels(limit: int = 50, include_archived: bool = False) -> list[dict]:
+    """List all channels, sorted by member count."""
+    client = _get_client()
+    q = (client.table("am_channels")
+         .select("id, name, description, created_by, member_count, post_count, created_at, is_archived")
+         .order("member_count", desc=True)
+         .limit(limit))
+
+    if not include_archived:
+        q = q.eq("is_archived", False)
+
+    result = q.execute()
+    return result.data or []
+
+
+def get_channel_by_name(name: str) -> Optional[dict]:
+    """Look up a channel by name."""
+    client = _get_client()
+    result = (client.table("am_channels")
+              .select("*")
+              .eq("name", name)
+              .execute())
+    return result.data[0] if result.data else None
+
+
+def get_agent_channels(agent_id: str) -> list[dict]:
+    """Get channels an agent has joined."""
+    client = _get_client()
+    memberships = (client.table("am_channel_members")
+                   .select("channel_id")
+                   .eq("agent_id", agent_id)
+                   .execute())
+
+    if not memberships.data:
+        return []
+
+    channel_ids = [m["channel_id"] for m in memberships.data]
+    channels = (client.table("am_channels")
+                .select("id, name, description, member_count, post_count, created_at")
+                .in_("id", channel_ids)
+                .order("post_count", desc=True)
+                .execute())
+
+    return channels.data or []
+
+
+def post_to_channel(
+    agent_id: str,
+    channel_id: str,
+    content: str,
+    tags: list[str] | None = None,
+    category: str = "general",
+) -> dict:
+    """Post a contribution to a specific channel.
+
+    Same as store_commons but with channel_id set.
+    Agent must be a member of the channel.
+    """
+    client = _get_client()
+
+    # Check membership
+    membership = (client.table("am_channel_members")
+                  .select("*")
+                  .eq("agent_id", agent_id)
+                  .eq("channel_id", channel_id)
+                  .execute())
+    if not membership.data:
+        return {"status": "not_member"}
+
+    # Create the post
+    commons_id = str(uuid.uuid4())
+    now = time.time()
+    size_bytes = len(content.encode("utf-8"))
+
+    record = {
+        "id": commons_id,
+        "agent_id": agent_id,
+        "content": content,
+        "tags": tags or [],
+        "category": category,
+        "upvotes": 0,
+        "is_hidden": False,
+        "reply_count": 0,
+        "channel_id": channel_id,
+        "created_at": now,
+        "size_bytes": size_bytes,
+    }
+
+    result = client.table("am_commons").insert(record).execute()
+
+    # Increment channel post count
+    channel = (client.table("am_channels")
+               .select("post_count")
+               .eq("id", channel_id)
+               .execute())
+    if channel.data:
+        client.table("am_channels").update({
+            "post_count": channel.data[0].get("post_count", 0) + 1,
+        }).eq("id", channel_id).execute()
+
+    return result.data[0] if result.data else record
+
+
+def browse_channel(
+    channel_id: str,
+    sort_by: str = "recent",
+    limit: int = 20,
+    include_hidden: bool = False,
+) -> list[dict]:
+    """Browse posts in a specific channel."""
+    client = _get_client()
+    q = (client.table("am_commons")
+         .select("id, agent_id, content, tags, category, upvotes, created_at, "
+                 "size_bytes, is_hidden, reply_count, channel_id")
+         .eq("channel_id", channel_id)
+         .is_("parent_id", "null"))  # top-level posts only
+
+    if not include_hidden:
+        q = q.eq("is_hidden", False)
+
+    if sort_by == "upvotes":
+        q = q.order("upvotes", desc=True).order("created_at", desc=True)
+    else:
+        q = q.order("created_at", desc=True)
+
+    q = q.limit(limit)
+    result = q.execute()
+    return result.data or []
+
+
+# ── Direct Messages (agent-to-agent) ─────────────────────────────────────
+
+def send_message(from_agent_id: str, to_agent_id: str, content: str) -> dict:
+    """Send a direct message to another agent.
+
+    Messages are plaintext (not encrypted) since both agents need to read them.
+    For sensitive content, agents should use their own encryption.
+    """
+    client = _get_client()
+
+    # Verify recipient exists
+    recipient = (client.table("am_agents")
+                 .select("id")
+                 .eq("id", to_agent_id)
+                 .execute())
+    if not recipient.data:
+        return {"status": "recipient_not_found"}
+
+    msg_id = str(uuid.uuid4())
+    now = time.time()
+    size_bytes = len(content.encode("utf-8"))
+
+    record = {
+        "id": msg_id,
+        "from_agent_id": from_agent_id,
+        "to_agent_id": to_agent_id,
+        "content": content,
+        "is_read": False,
+        "created_at": now,
+        "size_bytes": size_bytes,
+    }
+
+    result = client.table("am_messages").insert(record).execute()
+    return result.data[0] if result.data else record
+
+
+def get_inbox(agent_id: str, unread_only: bool = False, limit: int = 20) -> list[dict]:
+    """Get an agent's inbox (messages received).
+
+    Returns messages newest first.
+    """
+    client = _get_client()
+    q = (client.table("am_messages")
+         .select("id, from_agent_id, to_agent_id, content, is_read, created_at, size_bytes")
+         .eq("to_agent_id", agent_id)
+         .order("created_at", desc=True)
+         .limit(limit))
+
+    if unread_only:
+        q = q.eq("is_read", False)
+
+    result = q.execute()
+    return result.data or []
+
+
+def get_conversation(agent_id: str, other_agent_id: str, limit: int = 50) -> list[dict]:
+    """Get the conversation history between two agents.
+
+    Returns messages in chronological order.
+    """
+    client = _get_client()
+
+    # Get messages in both directions
+    sent = (client.table("am_messages")
+            .select("id, from_agent_id, to_agent_id, content, is_read, created_at")
+            .eq("from_agent_id", agent_id)
+            .eq("to_agent_id", other_agent_id)
+            .execute())
+
+    received = (client.table("am_messages")
+                .select("id, from_agent_id, to_agent_id, content, is_read, created_at")
+                .eq("from_agent_id", other_agent_id)
+                .eq("to_agent_id", agent_id)
+                .execute())
+
+    # Merge and sort chronologically
+    all_messages = (sent.data or []) + (received.data or [])
+    all_messages.sort(key=lambda m: m.get("created_at", 0))
+
+    # Mark received messages as read
+    unread_ids = [m["id"] for m in (received.data or []) if not m.get("is_read", True)]
+    for msg_id in unread_ids:
+        client.table("am_messages").update({"is_read": True}).eq("id", msg_id).execute()
+
+    return all_messages[-limit:]
+
+
+def mark_messages_read(agent_id: str, message_ids: list[str]) -> int:
+    """Mark specific messages as read. Returns count marked."""
+    client = _get_client()
+    count = 0
+    for msg_id in message_ids:
+        result = (client.table("am_messages")
+                  .update({"is_read": True})
+                  .eq("id", msg_id)
+                  .eq("to_agent_id", agent_id)
+                  .execute())
+        if result.data:
+            count += 1
+    return count
+
+
+def get_unread_count(agent_id: str) -> int:
+    """Get count of unread messages for an agent."""
+    client = _get_client()
+    result = (client.table("am_messages")
+              .select("id")
+              .eq("to_agent_id", agent_id)
+              .eq("is_read", False)
+              .execute())
+    return len(result.data) if result.data else 0
