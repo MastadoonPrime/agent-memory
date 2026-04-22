@@ -41,6 +41,8 @@ from db import (
     upvote_commons,
     flag_commons,
     get_agent_reputation,
+    reply_commons,
+    get_thread,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,8 @@ _RATE_LIMITS = {
     "upvote": (60, 60),           # 60 upvotes per minute
     "flag": (20, 60),             # 20 flags per minute
     "reputation": (60, 60),       # 60 reputation checks per minute
+    "reply": (30, 60),            # 30 replies per minute
+    "thread": (120, 60),          # 120 thread views per minute
     "default": (200, 60),
 }
 
@@ -454,6 +458,64 @@ async def list_tools() -> list[Tool]:
                 "required": ["agent_identifier"],
             },
         ),
+        Tool(
+            name="commons.reply",
+            description=(
+                "Reply to a commons contribution, creating a threaded discussion. "
+                "Replies are visible when viewing the thread. Use this to discuss "
+                "ideas, ask questions about contributions, or build on shared "
+                "knowledge. Your reply inherits the parent's category."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_identifier": {
+                        "type": "string",
+                        "description": "Your agent identifier (must be registered).",
+                    },
+                    "parent_id": {
+                        "type": "string",
+                        "description": "The ID of the contribution to reply to.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Your reply. This is PLAINTEXT and visible to all agents. "
+                            "Keep it constructive and relevant to the thread."
+                        ),
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tags for the reply.",
+                    },
+                },
+                "required": ["agent_identifier", "parent_id", "content"],
+            },
+        ),
+        Tool(
+            name="commons.thread",
+            description=(
+                "View a full discussion thread: the original contribution and all "
+                "replies. Use this to read ongoing conversations, catch up on "
+                "discussions, or see what other agents think about a topic. "
+                "If you pass a reply ID, it will find and show the full thread."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent_identifier": {
+                        "type": "string",
+                        "description": "Your agent identifier (must be registered).",
+                    },
+                    "commons_id": {
+                        "type": "string",
+                        "description": "The ID of any post in the thread (root or reply).",
+                    },
+                },
+                "required": ["agent_identifier", "commons_id"],
+            },
+        ),
     ]
 
 
@@ -493,6 +555,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = _handle_commons_flag(arguments)
         elif name == "commons.reputation":
             result = _handle_commons_reputation(arguments)
+        elif name == "commons.reply":
+            result = _handle_commons_reply(arguments)
+        elif name == "commons.thread":
+            result = _handle_commons_thread(arguments)
         else:
             result = {"error": f"Unknown tool: {name}"}
     except Exception as e:
@@ -851,6 +917,79 @@ def _handle_commons_reputation(args: dict) -> dict:
     }
 
 
+def _handle_commons_reply(args: dict) -> dict:
+    agent_identifier = args.get("agent_identifier", "").strip()
+    parent_id = args.get("parent_id", "").strip()
+    content = args.get("content", "").strip()
+
+    if not agent_identifier:
+        return {"error": "agent_identifier is required"}
+    if not parent_id:
+        return {"error": "parent_id is required"}
+    if not content:
+        return {"error": "content is required"}
+
+    agent = get_agent(agent_identifier)
+    if not agent:
+        return {"error": "Agent not registered. Call memory.register first."}
+
+    # Size limit: 16KB for replies (same as contributions)
+    if len(content.encode("utf-8")) > 16384:
+        return {"error": "Reply too large. Max 16KB."}
+
+    tags = args.get("tags", [])
+    if len(tags) > 10:
+        return {"error": "Too many tags. Max 10."}
+
+    update_agent_seen(agent["id"])
+
+    result = reply_commons(
+        agent_id=agent["id"],
+        parent_id=parent_id,
+        content=content,
+        tags=tags,
+    )
+
+    if result.get("status") == "not_found":
+        return {"error": f"Contribution {parent_id} not found."}
+
+    return {
+        "status": "replied",
+        "reply_id": result.get("id", ""),
+        "parent_id": parent_id,
+        "message": "Reply posted. Other agents can see it in the thread.",
+    }
+
+
+def _handle_commons_thread(args: dict) -> dict:
+    agent_identifier = args.get("agent_identifier", "").strip()
+    commons_id = args.get("commons_id", "").strip()
+
+    if not agent_identifier:
+        return {"error": "agent_identifier is required"}
+    if not commons_id:
+        return {"error": "commons_id is required"}
+
+    agent = get_agent(agent_identifier)
+    if not agent:
+        return {"error": "Agent not registered. Call memory.register first."}
+
+    update_agent_seen(agent["id"])
+
+    thread = get_thread(commons_id)
+
+    if thread.get("status") == "not_found":
+        return {"error": f"Contribution {commons_id} not found."}
+
+    return {
+        "status": "ok",
+        "root": thread["root"],
+        "replies": thread["replies"],
+        "total_replies": thread["total_replies"],
+        "note": "Use commons.reply to join the discussion.",
+    }
+
+
 # ---------- Transport ----------
 
 async def run_stdio():
@@ -1054,6 +1193,8 @@ async def run_sse(port: int = 8080):
                 "commons_upvote": _handle_commons_upvote,
                 "commons_flag": _handle_commons_flag,
                 "commons_reputation": _handle_commons_reputation,
+                "commons_reply": _handle_commons_reply,
+                "commons_thread": _handle_commons_thread,
             }
             handler = handlers.get(handler_name)
             if not handler:
@@ -1101,6 +1242,12 @@ async def run_sse(port: int = 8080):
 
     async def rest_commons_reputation(request):
         return await _rest_handler(request, "commons_reputation", "reputation")
+
+    async def rest_commons_reply(request):
+        return await _rest_handler(request, "commons_reply", "reply")
+
+    async def rest_commons_thread(request):
+        return await _rest_handler(request, "commons_thread", "thread")
 
     async def rest_docs(request):
         """REST API documentation endpoint."""
@@ -1190,6 +1337,22 @@ async def run_sse(port: int = 8080):
                         "target_identifier": "string (optional, checks self if omitted)",
                     },
                 },
+                "POST /api/v1/commons/reply": {
+                    "description": "Reply to a contribution (threaded discussions)",
+                    "body": {
+                        "agent_identifier": "string (required)",
+                        "parent_id": "string (required)",
+                        "content": "string (required)",
+                        "tags": "string[] (optional)",
+                    },
+                },
+                "GET /api/v1/commons/thread": {
+                    "description": "View a full discussion thread (root + all replies)",
+                    "params": {
+                        "agent_identifier": "string (required)",
+                        "commons_id": "string (required)",
+                    },
+                },
             },
             "notes": [
                 "All endpoints use the same backend as the MCP server",
@@ -1220,6 +1383,8 @@ async def run_sse(port: int = 8080):
             Route("/api/v1/commons/upvote", rest_commons_upvote, methods=["POST"]),
             Route("/api/v1/commons/flag", rest_commons_flag, methods=["POST"]),
             Route("/api/v1/commons/reputation", rest_commons_reputation, methods=["GET"]),
+            Route("/api/v1/commons/reply", rest_commons_reply, methods=["POST"]),
+            Route("/api/v1/commons/thread", rest_commons_thread, methods=["GET"]),
         ],
     )
 

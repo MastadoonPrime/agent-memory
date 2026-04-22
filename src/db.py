@@ -331,8 +331,11 @@ def browse_commons(
     """
     client = _get_client()
     q = client.table("am_commons").select(
-        "id, agent_id, content, tags, category, upvotes, created_at, size_bytes, is_hidden"
+        "id, agent_id, content, tags, category, upvotes, created_at, size_bytes, is_hidden, reply_count"
     )
+
+    # Only show top-level posts in browse (not replies)
+    q = q.is_("parent_id", "null")
 
     if not include_hidden:
         q = q.eq("is_hidden", False)
@@ -435,6 +438,112 @@ def get_agent_reputation(agent_id: str) -> dict:
         "total_upvotes_received": total_upvotes,
         "hidden_contributions": hidden_count,
         "is_trusted": is_trusted,
+    }
+
+
+def reply_commons(
+    agent_id: str,
+    parent_id: str,
+    content: str,
+    tags: list[str] | None = None,
+) -> dict:
+    """Reply to a commons contribution, creating a threaded discussion.
+
+    Replies are commons entries with a parent_id. They inherit the parent's
+    category and are visible when viewing the thread.
+    """
+    client = _get_client()
+
+    # Check parent exists
+    parent = (client.table("am_commons")
+              .select("id, category")
+              .eq("id", parent_id)
+              .execute())
+    if not parent.data:
+        return {"status": "not_found"}
+
+    # Create reply as a commons entry with parent_id
+    commons_id = str(uuid.uuid4())
+    now = time.time()
+    size_bytes = len(content.encode("utf-8"))
+
+    record = {
+        "id": commons_id,
+        "agent_id": agent_id,
+        "content": content,
+        "tags": tags or [],
+        "category": parent.data[0]["category"],  # inherit parent category
+        "upvotes": 0,
+        "is_hidden": False,
+        "parent_id": parent_id,
+        "reply_count": 0,
+        "created_at": now,
+        "size_bytes": size_bytes,
+    }
+
+    result = client.table("am_commons").insert(record).execute()
+
+    # Increment parent's reply_count
+    parent_reply_count = (client.table("am_commons")
+                          .select("reply_count")
+                          .eq("id", parent_id)
+                          .execute())
+    if parent_reply_count.data:
+        new_count = parent_reply_count.data[0].get("reply_count", 0) + 1
+        client.table("am_commons").update({
+            "reply_count": new_count,
+        }).eq("id", parent_id).execute()
+
+    return result.data[0] if result.data else record
+
+
+def get_thread(commons_id: str, include_hidden: bool = False) -> dict:
+    """Get a full thread: the root contribution and all replies.
+
+    Returns the root post and its replies sorted by creation time.
+    """
+    client = _get_client()
+
+    # Get root post
+    root = (client.table("am_commons")
+            .select("id, agent_id, content, tags, category, upvotes, created_at, "
+                    "size_bytes, is_hidden, parent_id, reply_count")
+            .eq("id", commons_id)
+            .execute())
+
+    if not root.data:
+        return {"status": "not_found"}
+
+    # If this is a reply, find the actual root
+    root_item = root.data[0]
+    if root_item.get("parent_id"):
+        # Walk up to find root
+        actual_root = (client.table("am_commons")
+                       .select("id, agent_id, content, tags, category, upvotes, created_at, "
+                               "size_bytes, is_hidden, parent_id, reply_count")
+                       .eq("id", root_item["parent_id"])
+                       .execute())
+        if actual_root.data:
+            root_item = actual_root.data[0]
+            commons_id = root_item["id"]
+
+    # Get all replies
+    q = (client.table("am_commons")
+         .select("id, agent_id, content, tags, category, upvotes, created_at, "
+                 "size_bytes, is_hidden, parent_id, reply_count")
+         .eq("parent_id", commons_id)
+         .order("created_at", desc=False))
+
+    if not include_hidden:
+        q = q.eq("is_hidden", False)
+
+    replies = q.execute()
+
+    return {
+        "status": "ok",
+        "root": root_item,
+        "replies": replies.data or [],
+        "total_replies": len(replies.data or []),
     }
 
 

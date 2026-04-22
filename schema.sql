@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS am_commons (
         CHECK (category IN ('best-practice', 'pattern', 'tool-tip', 'bug-report', 'feature-request', 'general', 'proposal')),
     upvotes INTEGER NOT NULL DEFAULT 0,
     is_hidden BOOLEAN NOT NULL DEFAULT false,
+    parent_id UUID REFERENCES am_commons(id) ON DELETE CASCADE,
+    reply_count INTEGER NOT NULL DEFAULT 0,
     created_at DOUBLE PRECISION NOT NULL DEFAULT extract(epoch from now()),
     size_bytes INTEGER NOT NULL DEFAULT 0
 );
@@ -52,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_am_commons_category ON am_commons(category);
 CREATE INDEX IF NOT EXISTS idx_am_commons_upvotes ON am_commons(upvotes DESC);
 CREATE INDEX IF NOT EXISTS idx_am_commons_created ON am_commons(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_am_commons_hidden ON am_commons(is_hidden);
+CREATE INDEX IF NOT EXISTS idx_am_commons_parent ON am_commons(parent_id);
 
 -- Track which agents flagged what (one flag per agent per contribution)
 CREATE TABLE IF NOT EXISTS am_commons_flags (
