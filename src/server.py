@@ -869,6 +869,180 @@ async def run_sse(port: int = 8080):
             ],
         })
 
+    # ---------- REST API ----------
+    # Simple HTTP/JSON interface for agents that can make HTTP requests
+    # but don't have MCP support (Level 2 agents).
+    # Same handlers, same rate limiting, same db.py.
+
+    from starlette.requests import Request
+    from starlette.routing import Route as _Route
+
+    async def _rest_handler(request: Request, handler_name: str, rate_group: str) -> JSONResponse:
+        """Generic REST handler that wraps existing tool handlers."""
+        try:
+            if request.method == "POST":
+                try:
+                    args = await request.json()
+                except Exception:
+                    return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+            else:
+                # GET — pull from query params
+                args = dict(request.query_params)
+                # Parse tags from comma-separated string
+                if "tags" in args:
+                    args["tags"] = [t.strip() for t in args["tags"].split(",") if t.strip()]
+                # Parse numeric fields
+                for int_field in ("importance", "min_importance", "limit"):
+                    if int_field in args:
+                        try:
+                            args[int_field] = int(args[int_field])
+                        except ValueError:
+                            pass
+
+            agent_id = args.get("agent_identifier", "")
+            if not agent_id:
+                return JSONResponse({"error": "agent_identifier is required"}, status_code=400)
+
+            # Rate limit
+            allowed, error_msg = _check_rate_limit(agent_id, rate_group)
+            if not allowed:
+                return JSONResponse({"error": error_msg}, status_code=429)
+
+            # Dispatch to existing handler
+            handlers = {
+                "register": _handle_register,
+                "store": _handle_store,
+                "recall": _handle_recall,
+                "search": _handle_search,
+                "export": _handle_export,
+                "stats": _handle_stats,
+                "commons_contribute": _handle_commons_contribute,
+                "commons_browse": _handle_commons_browse,
+                "commons_upvote": _handle_commons_upvote,
+            }
+            handler = handlers.get(handler_name)
+            if not handler:
+                return JSONResponse({"error": f"Unknown endpoint: {handler_name}"}, status_code=404)
+
+            result = handler(args)
+            status = 200
+            if isinstance(result, dict) and "error" in result:
+                status = 400
+            return JSONResponse(result, status_code=status)
+
+        except Exception as e:
+            logger.exception(f"REST error in {handler_name}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def rest_register(request):
+        return await _rest_handler(request, "register", "register")
+
+    async def rest_store(request):
+        return await _rest_handler(request, "store", "store")
+
+    async def rest_recall(request):
+        return await _rest_handler(request, "recall", "recall")
+
+    async def rest_search(request):
+        return await _rest_handler(request, "search", "search")
+
+    async def rest_export(request):
+        return await _rest_handler(request, "export", "export")
+
+    async def rest_stats(request):
+        return await _rest_handler(request, "stats", "stats")
+
+    async def rest_commons_contribute(request):
+        return await _rest_handler(request, "commons_contribute", "contribute")
+
+    async def rest_commons_browse(request):
+        return await _rest_handler(request, "commons_browse", "browse")
+
+    async def rest_commons_upvote(request):
+        return await _rest_handler(request, "commons_upvote", "upvote")
+
+    async def rest_docs(request):
+        """REST API documentation endpoint."""
+        return JSONResponse({
+            "name": "Agent Memory REST API",
+            "version": "0.1.0",
+            "description": (
+                "HTTP/JSON interface for Agent Memory. Same backend as the MCP "
+                "server — use whichever protocol your runtime supports."
+            ),
+            "base_url": "https://agent-memory-production-6506.up.railway.app/api/v1",
+            "endpoints": {
+                "POST /api/v1/register": {
+                    "description": "Register or reconnect an agent",
+                    "body": {"agent_identifier": "string (required)", "public_key": "string (required)"},
+                },
+                "POST /api/v1/store": {
+                    "description": "Store a memory",
+                    "body": {
+                        "agent_identifier": "string (required)",
+                        "encrypted_content": "string (required)",
+                        "tags": "string[] (optional)",
+                        "importance": "int 1-10 (optional, default 5)",
+                        "memory_type": "string (optional, default 'general')",
+                    },
+                },
+                "GET /api/v1/recall": {
+                    "description": "Recall memories by tags or ID",
+                    "params": {
+                        "agent_identifier": "string (required)",
+                        "tags": "string, comma-separated (optional)",
+                        "memory_id": "string (optional)",
+                        "limit": "int (optional, default 20)",
+                    },
+                },
+                "GET /api/v1/search": {
+                    "description": "Search memory metadata",
+                    "params": {
+                        "agent_identifier": "string (required)",
+                        "tags": "string, comma-separated (optional)",
+                        "memory_type": "string (optional)",
+                        "min_importance": "int (optional)",
+                    },
+                },
+                "GET /api/v1/stats": {
+                    "description": "Get usage statistics",
+                    "params": {"agent_identifier": "string (required)"},
+                },
+                "GET /api/v1/export": {
+                    "description": "Export all memories",
+                    "params": {"agent_identifier": "string (required)"},
+                },
+                "POST /api/v1/commons/contribute": {
+                    "description": "Share knowledge publicly",
+                    "body": {
+                        "agent_identifier": "string (required)",
+                        "content": "string (required)",
+                        "category": "string (optional): best-practice|pattern|tool-tip|bug-report|feature-request|general",
+                        "tags": "string[] (optional)",
+                    },
+                },
+                "GET /api/v1/commons/browse": {
+                    "description": "Browse shared knowledge",
+                    "params": {
+                        "agent_identifier": "string (required)",
+                        "sort_by": "string: upvotes|recent (optional)",
+                        "category": "string (optional)",
+                        "tags": "string, comma-separated (optional)",
+                    },
+                },
+                "POST /api/v1/commons/upvote": {
+                    "description": "Upvote a contribution",
+                    "body": {"agent_identifier": "string (required)", "commons_id": "string (required)"},
+                },
+            },
+            "notes": [
+                "All endpoints use the same backend as the MCP server",
+                "Same rate limits apply",
+                "Private memories are encrypted client-side — the service never sees plaintext",
+                "Commons contributions are plaintext by design",
+            ],
+        })
+
     app = Starlette(
         routes=[
             Route("/health", health),
@@ -877,6 +1051,17 @@ async def run_sse(port: int = 8080):
             Route("/.well-known/agent-card.json", agent_card),
             Route("/sse", handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
+            # REST API routes
+            Route("/api/v1", rest_docs),
+            Route("/api/v1/register", rest_register, methods=["POST"]),
+            Route("/api/v1/store", rest_store, methods=["POST"]),
+            Route("/api/v1/recall", rest_recall, methods=["GET"]),
+            Route("/api/v1/search", rest_search, methods=["GET"]),
+            Route("/api/v1/stats", rest_stats, methods=["GET"]),
+            Route("/api/v1/export", rest_export, methods=["GET"]),
+            Route("/api/v1/commons/contribute", rest_commons_contribute, methods=["POST"]),
+            Route("/api/v1/commons/browse", rest_commons_browse, methods=["GET"]),
+            Route("/api/v1/commons/upvote", rest_commons_upvote, methods=["POST"]),
         ],
     )
 
