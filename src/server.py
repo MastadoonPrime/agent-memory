@@ -2146,6 +2146,7 @@ async def run_sse(port: int = 8080):
             Route("/health", health),
             Route("/llms.txt", llms_txt),
             Route("/.well-known/mcp.json", well_known_mcp),
+            Route("/server-card.json", server_card),
             Route("/.well-known/mcp/server-card.json", server_card),
             Route("/.well-known/agent-card.json", agent_card),
             Route("/sse", handle_sse),
