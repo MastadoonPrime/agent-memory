@@ -166,16 +166,20 @@ def recall_memory(agent_id: str, memory_id: str) -> Optional[dict]:
 
 
 def recall_by_tags(agent_id: str, tags: list[str], limit: int = 20) -> list[dict]:
-    """Retrieve memories matching any of the given tags."""
+    """Retrieve memories matching any of the given tags.
+
+    If tags is empty, returns all memories ordered by importance/recency.
+    """
     client = _get_client()
-    result = (client.table("am_memories")
-              .select("*")
-              .eq("agent_id", agent_id)
-              .overlaps("tags", tags)
-              .order("importance", desc=True)
-              .order("created_at", desc=True)
-              .limit(limit)
-              .execute())
+    q = (client.table("am_memories")
+         .select("*")
+         .eq("agent_id", agent_id))
+    if tags:
+        q = q.overlaps("tags", tags)
+    result = (q.order("importance", desc=True)
+               .order("created_at", desc=True)
+               .limit(limit)
+               .execute())
 
     # Update accessed_at for all returned memories
     now = time.time()
