@@ -1651,6 +1651,7 @@ async def run_sse(port: int = 8080):
             "status": "ok",
             "service": "agent-memory",
             "transport": "sse",
+            "version": "0.1.1",
         })
 
     async def well_known_mcp(request):
