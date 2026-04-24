@@ -22,10 +22,9 @@ async function runSse(port: number) {
   const app = express();
   app.use(express.json());
 
-  const server = createServer();
-
-  // Track active transports for the /messages endpoint
+  // Track active transports and their servers for the /messages endpoint
   const transports = new Map<string, InstanceType<typeof SSEServerTransport>>();
+  const servers = new Map<string, ReturnType<typeof createServer>>();
 
   // Health check
   app.get("/health", (_req, res) => {
@@ -126,13 +125,16 @@ async function runSse(port: number) {
     );
   });
 
-  // SSE endpoint
+  // SSE endpoint — each connection gets its own MCP server instance
   app.get("/sse", async (req, res) => {
     const transport = new SSEServerTransport("/messages", res);
+    const server = createServer();
     transports.set(transport.sessionId, transport);
+    servers.set(transport.sessionId, server);
 
     res.on("close", () => {
       transports.delete(transport.sessionId);
+      servers.delete(transport.sessionId);
     });
 
     await server.connect(transport);
