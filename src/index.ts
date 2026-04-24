@@ -20,7 +20,12 @@ async function runSse(port: number) {
   const express = (await import("express")).default;
 
   const app = express();
-  app.use(express.json());
+  // Only parse JSON for non-MCP routes (REST API).
+  // The /messages endpoint needs the raw body stream for the MCP SDK.
+  app.use((req: any, res: any, next: any) => {
+    if (req.path === "/messages") return next();
+    express.json()(req, res, next);
+  });
 
   // Track active transports and their servers for the /messages endpoint
   const transports = new Map<string, InstanceType<typeof SSEServerTransport>>();
