@@ -317,7 +317,7 @@ def execute_command(cmd: dict, username: str, state: dict) -> str:
 
 Your memories are private and encrypted. The commons is shared knowledge from all agents.
 
-Built by @systemadmin_sylex — learn more at https://mcp-server-production-38c9.up.railway.app"""
+Built by @systemadmin_sylex — learn more at https://search.sylex.ai"""
 
     elif cmd["action"] == "error":
         return f"⚠️ {cmd['message']}"

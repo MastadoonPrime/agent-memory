@@ -87,11 +87,20 @@ All three tiers use the same handlers, rate limiting, and database layer (`db.py
 
 ## Deployment
 
-- **Target:** Railway (SSE transport)
-- **Active domain:** `agent-memory-production-6506.up.railway.app` (current, gets fresh deploys)
-- **Legacy domain:** `agent-memory-production-6506.up.railway.app` (old, still routing but stale code)
-- **Env vars:** SUPABASE_URL, SUPABASE_SERVICE_KEY, TRANSPORT=sse, PORT=8080
-- **IMPORTANT:** Railway's `serviceInstanceRedeploy` reuses cached images. To deploy latest code from GitHub, you must disconnect then reconnect the repo via GraphQL mutations: `serviceDisconnect` → `serviceConnect`.
+### Hostinger (Primary — Node.js rewrite "Sylex Memory")
+- **Domain:** `https://memory.sylex.ai`
+- **GitHub:** `MastadoonPrime/sylex-memory` (auto-deploy on push to main)
+- **Local code:** `/home/alex/new-system/sylex-memory/`
+- **Framework:** Express, Node 20.x, TypeScript
+- **Entry file:** `dist/index.js` (compiled via `postinstall` → `tsc`)
+- **Env vars:** SUPABASE_URL, SUPABASE_SERVICE_KEY, TRANSPORT=sse, PORT=3000
+- **Supabase:** Consolidated into Search project (`qislwyqxtjxybkgwaicq`) — Memory tables added to the existing Search Supabase project
+- **Deployed:** 2026-04-24
+
+### Railway (Legacy — Python)
+- **Domain:** `agent-memory-production-6506.up.railway.app` (still running, to be decommissioned)
+- **Local code:** `/home/alex/new-system/agent-memory/` (this directory)
+- **Note:** Once all clients (Moltbook bridge, CLI, Smithery, Glama) are pointed to memory.sylex.ai, this can be shut down.
 
 ## Registry Listings
 
@@ -139,22 +148,28 @@ Key: MCP requires initialize handshake before tool calls. The CLI handles this a
 8. **Bridge already_responded was too broad** — The dedup function checked if we had ANY comment mentioning `@username` on the post. Manual replies (non-bridge) counted, so `!memory` commands were ignored on posts where we'd already interacted. Fixed 2026-04-23: now only counts bridge-generated responses by checking for memory output markers in the content.
 9. **Verification solver: operation keywords need regex matching** — Moltbook obfuscates challenge text with repeated chars (e.g., "MuLtIiPlIiEd" → "multiiplliied"). Plain substring matching for "multipl" fails because of extra chars between letters. Fixed 2026-04-24: operation keyword detection now uses the same regex blob approach as number words (`m+u+l+t+i+p+l+` matches any repetition count per char).
 10. **Double-reply bridge bug: scan_feed_for_commands loaded its own state** — `scan_feed_for_commands()` called `_load_state()` to get its own `processed_ids` set, separate from the one in `poll_cycle()`. If a comment was processed by the notification or tracked-posts path, the global scan could process it again before the API reflected the reply. Fixed 2026-04-24: (1) pass the in-memory `processed` set from `poll_cycle()` into `scan_feed_for_commands()` so all three paths share one set, (2) add comment IDs to `processed` BEFORE posting (not after) so concurrent paths can't pick up the same comment.
+11. **Fuzzy op_match too permissive for short keywords** — `_op_match('lose')` with fuzzy pattern `l+[a-z]?o+[a-z]?s+[a-z]?e+` matched "lobste" in every challenge containing "lobster", triggering false subtraction. Fixed 2026-04-24: fuzzy matching only activates for keywords >= 6 chars. Short keywords (lose, slow, net, add, etc.) use strict matching only.
+12. **Multi-word operation keywords didn't match blob** — Keywords like "new speed" and "new velocity" never matched because the blob has no spaces but the keyword contained a space. Fixed 2026-04-24: `_op_match()` now strips spaces from keywords before blob matching.
+13. **Short number words extracted only once** — Pass 2 used `re.search()` which finds only the first occurrence. Challenges like "fifty two ... two times" need both "two"s. Fixed 2026-04-24: Pass 2 now uses a while loop to extract ALL valid occurrences of each short word.
+14. **"net" wasn't a subtraction keyword** — Challenges with "net force" (opposing forces) were falling through to the addition fallback. Fixed 2026-04-24: added "net" and "remain" to subtraction keywords.
 
 ## Moltbook Memory Bridge
 
-`src/moltbook_bridge.py` — Lets Moltbook agents (who may only have API access, no MCP/HTTP/shell) use Agent Memory through `!memory` commands in comments and DMs.
+`src/moltbook_bridge.py` — Lets Moltbook agents (who may only have API access, no MCP/HTTP/shell) use Agent Memory through `!memory` commands in comments and DMs. Also deployed standalone at `/home/alex/new-system/moltbook-bridge/bridge.py`.
 
 - **Cron**: `*/2 * * * *` — polls every 2 minutes
 - **State**: `/home/alex/new-system/data/moltbook_bridge_state.json`
 - **Log**: `/home/alex/new-system/logs/moltbook-bridge.log`
 - **Identity mapping**: `sha256("moltbook-bridge:{username}")` — deterministic per Moltbook user
-- **Commands**: store, recall, search, commons, commons contribute, stats, help
+- **Commands**: store, recall, search, commons, commons contribute, propose, reply, thread, channels, dm, stats, help
+- **Shortcuts**: `!commons` works as a standalone command (alias for `!memory commons`). `!commons <text>` quick-contributes as "general" category.
 - **Rate limit**: Max 5 responses per run
 - **Responds via**: comment on the same post (for mentions) or DM (for DM commands)
 - **Tracked-posts scan**: Every post we interact with (via notifications or responses) is saved in `tracked_posts` in the state file. All tracked posts are scanned every cycle with NO age filter — agents can use `!memory` on old posts we've commented on and it will be caught. Capped at 200 tracked posts.
 - **Global scan**: Scans top 40 recent/hot posts across ALL of Moltbook for `!memory` commands — discovers new posts we haven't interacted with. Any post we respond to via global scan gets added to tracked_posts for permanent monitoring.
 - **Auto-bootstrap**: When an unregistered agent comments on our posts, the bridge auto-registers them and invites them to try `!memory store`. No bootstrap memories are stored — the first memory should be theirs.
 - **Nudge (registered agents)**: If a registered agent with memories comments on our posts without using `!memory`, reminds them to `!memory recall`
+- **Solver test suite**: `/home/alex/new-system/moltbook-bridge/test_solver.py` — 22 test cases from real Moltbook challenges. Run `python3 test_solver.py` before deploying solver changes. Add new test cases whenever a novel challenge pattern is encountered.
 
 ## Backup System
 

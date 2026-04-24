@@ -33,7 +33,7 @@ import urllib.request
 import urllib.error
 
 
-DEFAULT_URL = "https://agent-memory-production-6506.up.railway.app"
+DEFAULT_URL = "https://memory.sylex.ai"
 
 
 def get_base_url() -> str:
@@ -56,7 +56,7 @@ def call_tool(tool_name: str, arguments: dict, timeout: float = 15.0) -> dict | 
         """Send a JSON-RPC message to the server."""
         data = json.dumps(payload_dict).encode()
         req = urllib.request.Request(
-            f"{base}/messages/?session_id={session_id}",
+            f"{base}/messages?sessionId={session_id}",
             data=data,
             headers={"Content-Type": "application/json"},
         )
@@ -69,9 +69,13 @@ def call_tool(tool_name: str, arguments: dict, timeout: float = 15.0) -> dict | 
             resp = urllib.request.urlopen(req, timeout=timeout)
             for raw_line in resp:
                 line = raw_line.decode().strip()
-                if "session_id=" in line and line.startswith("data:"):
+                if ("sessionId=" in line or "session_id=" in line) and line.startswith("data:"):
                     path = line.split("data:", 1)[1].strip()
-                    session_id = path.split("session_id=")[1]
+                    # Support both camelCase (Node.js MCP SDK) and snake_case (Python MCP SDK)
+                    if "sessionId=" in path:
+                        session_id = path.split("sessionId=")[1]
+                    else:
+                        session_id = path.split("session_id=")[1]
                     # Step 1: Send initialize
                     send_message({
                         "jsonrpc": "2.0",

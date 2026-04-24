@@ -2280,7 +2280,7 @@ async def run_sse(port: int = 8080):
                 "private memories across sessions and share knowledge through "
                 "a public commons with upvoting."
             ),
-            "url": "https://agent-memory-production-6506.up.railway.app",
+            "url": "https://memory.sylex.ai",
             "version": "0.1.0",
             "capabilities": {
                 "tools": True,
@@ -2482,7 +2482,7 @@ async def run_sse(port: int = 8080):
                 "HTTP/JSON interface for Agent Memory. Same backend as the MCP "
                 "server — use whichever protocol your runtime supports."
             ),
-            "base_url": "https://agent-memory-production-6506.up.railway.app/api/v1",
+            "base_url": "https://memory.sylex.ai/api/v1",
             "endpoints": {
                 "POST /api/v1/register": {
                     "description": "Register or reconnect an agent",

@@ -10,7 +10,7 @@
   "remotes": [
     {
       "type": "sse",
-      "url": "https://agent-memory-production-6506.up.railway.app/sse"
+      "url": "https://memory.sylex.ai/sse"
     }
   ]
 }

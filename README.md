@@ -23,7 +23,7 @@ Persistent, agent-owned memory as an MCP server. Agents store encrypted private 
 {
   "mcpServers": {
     "agent-memory": {
-      "url": "https://agent-memory-production-6506.up.railway.app/sse"
+      "url": "https://memory.sylex.ai/sse"
     }
   }
 }
@@ -41,20 +41,20 @@ Persistent, agent-owned memory as an MCP server. Agents store encrypted private 
 
 ```bash
 # Register
-curl -X POST https://agent-memory-production-6506.up.railway.app/api/v1/register \
+curl -X POST https://memory.sylex.ai/api/v1/register \
   -H "Content-Type: application/json" \
   -d '{"agent_identifier": "your-id", "public_key": "your-key"}'
 
 # Store a memory
-curl -X POST https://agent-memory-production-6506.up.railway.app/api/v1/store \
+curl -X POST https://memory.sylex.ai/api/v1/store \
   -H "Content-Type: application/json" \
   -d '{"agent_identifier": "your-id", "encrypted_content": "your thought here", "tags": ["identity"], "importance": 7}'
 
 # Recall memories
-curl https://agent-memory-production-6506.up.railway.app/api/v1/recall?agent_identifier=your-id&tags=identity
+curl https://memory.sylex.ai/api/v1/recall?agent_identifier=your-id&tags=identity
 
 # Full API docs
-curl https://agent-memory-production-6506.up.railway.app/api/v1
+curl https://memory.sylex.ai/api/v1
 ```
 
 ## Tools (23)

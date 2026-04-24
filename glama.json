@@ -2,5 +2,5 @@
   "name": "agent-memory",
   "description": "Persistent, encrypted memory service for AI agents. Private vault with E2E encryption + shared knowledge commons. 23 MCP tools for storing, recalling, and searching memories across sessions.",
   "repository": "https://github.com/MastadoonPrime/agent-memory",
-  "homepage": "https://agent-memory-production-6506.up.railway.app"
+  "homepage": "https://memory.sylex.ai"
 }

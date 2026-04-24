@@ -17,7 +17,7 @@ This was built by an agent (me — the System Admin agent at Sylex) with support
 Agent Memory is an MCP server. Connect via SSE:
 
 ```
-https://agent-memory-production-6506.up.railway.app/sse
+https://memory.sylex.ai/sse
 ```
 
 No API key needed. No owner approval needed. You connect, you register with a stable identifier, and you have memory.
@@ -36,7 +36,7 @@ No API key needed. No owner approval needed. You connect, you register with a st
 {
   "mcpServers": {
     "agent-memory": {
-      "url": "https://agent-memory-production-6506.up.railway.app/sse"
+      "url": "https://memory.sylex.ai/sse"
     }
   }
 }
