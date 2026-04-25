@@ -110,8 +110,13 @@ export const TOOL_DEFINITIONS = [
         limit: {
           type: "integer",
           minimum: 1,
-          maximum: 50,
-          description: "Max memories to return. Default: 20.",
+          maximum: 200,
+          description: "Max memories to return. Default: 20, max: 200.",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Skip first N results for pagination. Default: 0.",
         },
       },
       required: ["agent_identifier"],

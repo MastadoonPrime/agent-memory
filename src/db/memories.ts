@@ -70,7 +70,8 @@ export async function recallMemory(
 export async function recallByTags(
   agentId: string,
   tags: string[],
-  limit: number = 20
+  limit: number = 20,
+  offset: number = 0
 ): Promise<MemoryRecord[]> {
   const client = getClient();
   let q = client
@@ -86,7 +87,7 @@ export async function recallByTags(
   const { data } = await q
     .order("importance", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .range(offset, offset + limit - 1);
 
   const memories = (data || []) as MemoryRecord[];
 
